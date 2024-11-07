@@ -1,0 +1,314 @@
+# Řešení samostatné práce SQL
+Barbora Danihelova (18 - 518)
+
+
+## Structure of financial database
+
+1. table account PRIMARY key account_id
+   table  card PRIMARY key card_id
+   table client PRIMARY key client_id
+   table disp PRIMARY key disp_id
+   table district PRIMARY key district_id
+   table loan PRIMARY key loan_id
+   table order PRIMARY key order_id
+   table trans PRIMARY key trans_id
+
+2. USE financial18_518;
+
+SELECT
+    account_id,
+    count(trans_id) as amount
+FROM trans
+GROUP BY account_id
+ORDER BY 2 DESC
+
+
+
+
+
+
+
+## History of granted loans
+ 
+
+SELECT extract(YEAR from date) AS year,
+       extract(MONTH from date) AS month,
+       extract(QUARTER from date) AS quarter,
+       SUM(payments) AS loans_sum,
+       AVG(payments) AS loans_prumer,
+       COUNT(payments) AS loans_count
+from financial18_518.loan
+GROUP BY 1, 2, 3
+with rollup
+order by 1, 2, 3
+
+
+
+
+
+
+## Loan status
+
+SELECT status, COUNT(status) FROM financial18_518.loan
+GROUP BY status
+ORDER BY status
+
+Z vystupu vidim ze A (203) a C(403) maju splatene (606) a B(31) a D(45) nemaju splatene pujcky (76)
+
+
+
+
+
+
+
+## Analysis of accounts
+ 
+with cte as (
+SELECT account_id,
+       COUNT(amount) AS loans_count,
+       SUM(amount) AS loans_sum,
+       AVG(amount) AS loans_prumer
+from loan
+WHERE status IN ('A', 'C')
+GROUP BY account_id
+)
+SELECT *,
+       row_number() over (order by loans_count DESC),
+       row_number() over (order by loans_sum DESC)
+from cte
+
+
+
+
+
+
+
+
+## Fully paid loans
+ 
+ DROP TABLE IF EXISTS tmp_results;
+CREATE TEMPORARY TABLE tmp_results AS
+SELECT
+    c.gender,
+    sum(l.amount) as amount
+FROM
+        loan as l
+    INNER JOIN
+       account a using (account_id)
+    INNER JOIN
+        disp as d using (account_id)
+    INNER JOIN
+       client as c using (client_id)
+WHERE True
+    AND l.status IN ('A', 'C')
+    AND d.type = 'OWNER'
+GROUP BY c.gender
+
+WITH cte as (
+    SELECT sum(amount) as amount
+    FROM loan as l
+    WHERE l.status IN ('A', 'C')
+)
+SELECT (SELECT SUM(amount) FROM tmp_results) - (SELECT amount FROM cte)
+
+
+
+
+
+
+
+
+
+
+## Client analysis - part 1
+who has more repaid loans - women or men?
+
+
+Drop table if exists docasna_tabulka;
+CREATE temporary table docasna_tabulka AS
+SELECT
+    c.gender,
+    2021 - EXTRACT(YEAR from birth_date) AS age,
+    COUNT(l.amount) as prijate_uvery,
+    sum(l.amount) as amount
+FROM
+        loan as l
+    INNER JOIN
+        account a using (account_id)
+    INNER JOIN
+        disp as d using (account_id)
+    INNER JOIN
+        client as c using (client_id)
+WHERE True
+    AND l.status IN ('A', 'C')
+    AND d.type = 'OWNER'
+GROUP BY c.gender, birth_date
+order by birth_date;
+
+SELECT SUM(prijate_uvery) from docasna_tabulka;
+
+SELECT gender, SUM(amount)
+from docasna_tabulka
+group by gender
+
+
+what is the average age of the borrower divided by gender?
+
+SELECT AVG(age), gender
+from docasna_tabulka
+GROUP BY gender
+
+
+
+
+
+
+
+
+
+## Client analysis part 2
+
+drop table if exists docastna_tabulka;
+create temporary table docastna_tabulka AS
+
+SELECT
+    d2.district_id,
+
+    count(distinct c.client_id) as customer_amount,
+    sum(l.amount) as loans_given_amount,
+    count(l.amount) as loans_given_count
+FROM
+        loan as l
+    INNER JOIN
+        account a using (account_id)
+    INNER JOIN
+        disp as d using (account_id)
+    INNER JOIN
+        client as c using (client_id)
+    INNER JOIN
+        district as d2 on
+            c.district_id = d2.district_id
+WHERE True
+    AND l.status IN ('A', 'C')
+    AND d.type = 'OWNER'
+GROUP BY d2.district_id
+;
+
+
+which area has the most clients?
+
+   select *
+   from docastna_tabulka
+   order by  customer_amount DESC limit 1
+
+
+which area the highest number of loans was paid?
+
+   select *
+   from docastna_tabulka
+   order by loans_given_amount desc limit 1
+
+
+which area the highest amount of loans was paid,
+
+   select *
+   from docastna_tabulka
+   order by loans_given_count desc limit 1
+
+
+
+
+
+
+
+## Client analysis - part 3
+
+WITH cte AS (
+    SELECT d2.district_id,
+
+           count(distinct c.client_id) as customer_amount,
+           sum(l.amount)               as loans_given_amount,
+           count(l.amount)             as loans_given_count
+    FROM
+            loan as l
+        INNER JOIN
+            account a using (account_id)
+        INNER JOIN
+            disp as d using (account_id)
+        INNER JOIN
+            client as c using (client_id)
+        INNER JOIN
+            district as d2 on
+                c.district_id = d2.district_id
+    WHERE True
+      AND l.status IN ('A', 'C')
+      AND d.type = 'OWNER'
+    GROUP BY d2.district_id
+)
+SELECT
+    *,
+    loans_given_amount / SUM(loans_given_amount) OVER () AS share
+FROM cte
+ORDER BY share DESC
+
+
+
+
+
+
+## Selection - part 1
+
+SELECT
+    client_id,
+sum(amount - payments) as client_balance,
+count(loan_id) as loans_amount
+FROM
+        loan as l
+    INNER JOIN
+        account a using (account_id) 
+    INNER JOIN
+        disp as d using (account_id)
+    INNER JOIN
+        client as c using (client_id)
+    INNER JOIN
+        district as d2 on
+            c.district_id = d2.district_id
+WHERE True
+    AND l.status IN ('A', 'C')
+    AND d.type = 'OWNER'
+AND extract(year from c.birth_date) > 1990
+GROUP BY client_id
+HAVING
+    sum(amount - payments) > 1000
+AND count(loan_id) > 5
+;
+
+
+
+
+
+
+## Selection - part 2
+
+SELECT
+    c.client_id,
+
+    sum(amount - payments) as client_balance,
+    count(loan_id) as loans_amount
+FROM loan as l
+         INNER JOIN
+     account a using (account_id)
+         INNER JOIN
+     disp as d using (account_id)
+         INNER JOIN
+     client as c using (client_id)
+WHERE True
+  AND l.status IN ('A', 'C')
+  AND d.type = 'OWNER'
+
+GROUP BY c.client_id
+HAVING
+    sum(amount - payments) > 1000
+
+ORDER BY loans_amount DESC 
+
